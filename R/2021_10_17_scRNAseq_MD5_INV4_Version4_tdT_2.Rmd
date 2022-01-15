@@ -1,0 +1,164 @@
+---
+title: "MD5_INV4_scRNAseq_tdT_2"
+author: "David F"
+date: "11/24/2021"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(Seurat)
+library(patchwork)
+
+# LOAD 10X DATASETS
+
+# Load the mktC_2524 dataset
+mktC_2524_data <- Read10X(data.dir = "/Volumes/Toshiba_EXT/davidfalvo/mac2/scRNA_seq_files/2021_10_17_MD5_INV4_scRNAseq/Processed_wTDT_2/2524/outs/filtered_feature_bc_matrix")
+
+# Initialize the Seurat object with the raw (non-normalized data).
+mktC_2524 <- CreateSeuratObject(counts = mktC_2524_data, min.cells = 3, min.features = 200, project = "mktC_2524")
+
+# Load the mktS_2544 dataset
+mktS_2544_data <- Read10X(data.dir = "/Volumes/Toshiba_EXT/davidfalvo/mac2/scRNA_seq_files/2021_10_17_MD5_INV4_scRNAseq/Processed_wTDT_2/2544/outs/filtered_feature_bc_matrix")
+
+# Initialize the Seurat object with the raw (non-normalized data).
+mktS_2544 <- CreateSeuratObject(counts = mktS_2544_data, min.cells = 3, min.features = 200, project = "mktS_2544")
+
+# Load the mtS_2546 dataset
+mtS_2546_data <- Read10X(data.dir = "/Volumes/Toshiba_EXT/davidfalvo/mac2/scRNA_seq_files/2021_10_17_MD5_INV4_scRNAseq/Processed_wTDT_2/2546/outs/filtered_feature_bc_matrix")
+
+# Initialize the Seurat object with the raw (non-normalized data).
+mtS_2546 <- CreateSeuratObject(counts = mtS_2546_data, min.cells = 3, min.features = 200, project = "mtS_2546")
+
+# Load the mtC_2547 dataset
+mtC_2547_data <- Read10X(data.dir = "/Volumes/Toshiba_EXT/davidfalvo/mac2/scRNA_seq_files/2021_10_17_MD5_INV4_scRNAseq/Processed_wTDT_2/2547/outs/filtered_feature_bc_matrix")
+
+# Initialize the Seurat object with the raw (non-normalized data).
+mtC_2547 <- CreateSeuratObject(counts = mtC_2547_data, min.cells = 3, min.features = 200, project = "mtC_2547")
+
+```
+
+```{r}
+# Merge objects into a single Seurat object
+
+# add information to identify dataset of origin
+mktC_2524$dataset <- 'mktC_2524'
+mktS_2544$dataset <- 'mktS_2544'
+mtS_2546$dataset <- 'mtS_2546'
+mtC_2547$dataset <- 'mtC_2547'
+
+md5_inv4_merged <- merge(x = mktC_2524, y = c(mktS_2544, mtS_2546, mtC_2547), add.cell.ids = c("mktC_2524", "mktS_2544", "mtS_2546", "mtC_2547"))
+
+# the table function will provide the cell numbers in each  data set
+table(Idents(md5_inv4_merged))
+
+```
+
+```{r}
+# STANDARD  PRE-PROCESSING WORKFLOW
+
+# create an identity within the metadata specifying the mitochondrial percentage features
+md5_inv4_merged[["percent.mt"]] <- PercentageFeatureSet(md5_inv4_merged, pattern = "^mt-")
+
+```
+
+```{r}
+#  VISUALIZE QC METRICS  AS A VIOLIN PLOT
+
+# using the function VlnPlot create  a violin plot that shows the distribution of RNA counts, mitochondrial
+# percentages, and the gene number for each sample
+all_vln <- VlnPlot(md5_inv4_merged, features = c("nCount_RNA", "percent.mt", "nFeature_RNA"), pt.size = 0)
+
+nCount_rna <- VlnPlot(md5_inv4_merged, features = c("nCount_RNA"), pt.size = 0) + NoLegend() + ylim(0, 15000)
+
+percent_mt <- VlnPlot(md5_inv4_merged, features = c("percent.mt"), pt.size = 0) + 
+   geom_hline(yintercept = 5, col = 'red', size = 0.5) + NoLegend()
+
+nFeature_rna <- VlnPlot(md5_inv4_merged, features = c("nFeature_RNA"), pt.size = 0) + 
+  geom_hline(yintercept = c(200, 2500), col = 'red', size = 0.5) + NoLegend()
+
+nCount_rna | percent_mt | nFeature_rna
+
+```
+
+```{r}
+# Filter out low-quality cells 
+md5_inv4_merged <- subset(md5_inv4_merged, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+
+table(Idents(md5_inv4_merged))
+
+```
+
+```{r}
+VlnPlot(md5_inv4_merged, features = c("nCount_RNA", "percent.mt", "nFeature_RNA"), pt.size = 0)
+
+```
+
+```{r}
+# specify that we will perform downstream analysis on the corrected data note that the
+# original unmodified data still resides in the 'RNA' assay
+# DefaultAssay(md5_inv4_rna_integrated) <- "integrated"
+
+md5_inv4_merged <- NormalizeData(md5_inv4_merged)
+md5_inv4_merged <- FindVariableFeatures(md5_inv4_merged, selection.method = "vst", nfeatures = 2000)
+
+# Run the standard workflow for visualization and clustering
+md5_inv4_merged <- ScaleData(md5_inv4_merged, verbose = FALSE)
+md5_inv4_merged <- RunPCA(md5_inv4_merged, npcs = 20, verbose = FALSE)
+md5_inv4_merged <- RunUMAP(md5_inv4_merged, reduction = "pca", dims = 1:20)
+md5_inv4_merged <- FindNeighbors(md5_inv4_merged, reduction = "pca", dims = 1:20)
+md5_inv4_merged <- FindClusters(md5_inv4_merged, resolution = 0.5)
+
+DimPlot(md5_inv4_merged, reduction = "umap", label = T) + NoLegend()
+
+markers <- FindAllMarkers(md5_inv4_merged, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 1.5)
+markers %>% group_by(cluster) %>% slice_max(n = 20, order_by = avg_log2FC)
+
+c3_v_c6 <- FindMarkers(object = md5_inv4_merged, ident.1 = 3, ident.2 = 6, logfc.threshold = 1)
+c3_v_c6 <- c3_v_c6 %>% arrange(avg_log2FC)
+
+c2_v_c3 <- FindMarkers(object = md5_inv4_merged, ident.1 = 2, ident.2 = 3, logfc.threshold = 1)
+c2_v_c3 <- c2_v_c3 %>% arrange(avg_log2FC)
+
+c2_v_c6 <- FindMarkers(object = md5_inv4_merged, ident.1 = 2, ident.2 = 6, logfc.threshold = 1)
+c2_v_c6 <- c2_v_c6 %>% arrange(avg_log2FC)
+
+c15_v_c14 <- FindMarkers(object = md5_inv4_merged, ident.1 = 15, ident.2 = 14, logfc.threshold = 1)
+c15_v_c14 <- c15_v_c14 %>% arrange(avg_log2FC)
+
+c4_v_c13 <- FindMarkers(object = md5_inv4_merged, ident.1 = 4, ident.2 = 13, logfc.threshold = 1)
+c4_v_c13 <- c4_v_c13 %>% arrange(avg_log2FC)
+
+c0_v_c12 <- FindMarkers(object = md5_inv4_merged, ident.1 = 0, ident.2 = 12, logfc.threshold = 1)
+c0_v_c12 <- c0_v_c12 %>% arrange(avg_log2FC)
+
+c0_v_c9 <- FindMarkers(object = md5_inv4_merged, ident.1 = "0_Acinar", ident.2 = "9_Acinar", logfc.threshold = 1)
+c0_v_c9 <- c0_v_c9 %>% arrange(avg_log2FC)
+
+
+c11_v_c1 <- FindMarkers(object = md5_inv4_merged, ident.1 = 11, ident.2 = 1, logfc.threshold = 1)
+c11_v_c1 <- c11_v_c1 %>% arrange(avg_log2FC)
+
+c15_v_c1 <- FindMarkers(object = md5_inv4_merged, ident.1 = 15, ident.2 = 1, logfc.threshold = 1)
+c15_v_c1 <- c15_v_c1 %>% arrange(avg_log2FC)
+
+c9_v_c1 <- FindMarkers(object = md5_inv4_merged, ident.1 = 9, ident.2 = 1, logfc.threshold = 1)
+c9_v_c1 <- c9_v_c1 %>% arrange(avg_log2FC)
+
+c3_v_c1 <- FindMarkers(object = md5_inv4_merged, ident.1 = 3, ident.2 = 1, logfc.threshold = 1)
+c3_v_c1 <- c3_v_c1 %>% arrange(avg_log2FC)
+
+c5_v_c13 <- FindMarkers(object = md5_inv4_merged, ident.1 = 5, ident.2 = 13, logfc.threshold = 1)
+c5_v_c13 <- c5_v_c13 %>% arrange(avg_log2FC)
+
+c6_v_c4 <- FindMarkers(object = md5_inv4_merged, ident.1 = 6, ident.2 = 4, logfc.threshold = 1)
+c6_v_c4 <- c6_v_c4 %>% arrange(avg_log2FC)
+
+FeaturePlot(object = md5_inv4_merged, features = "Adgre1", min.cutoff = 0, pt.size = 0.5, label = T, order = T, cols = c("blue", "red"))
+
+# hm <- DoHeatmap(subset(md5_inv4_merged, idents = c(1, 3, 9, 11, 15)), features = rownames(c15_v_c1), size = 2) + FontSize(y.text = 4.5, x.text = 0)
+
+# hm <- DoHeatmap(subset(md5_inv4_merged, idents = c(9,1)), features = rownames(c9_v_c1), size = 2) + FontSize(y.text = 0.5, x.text = 0)
+
+```
